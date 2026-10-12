@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: M_RoadsideGravel_BuiltIn
+  m_Shader: {fileID: 4800000, guid: b82c4b8ea3a14a2fa993e05d2b12b202, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties:
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _PatchScale: 0.12
+    - _DetailScale: 0.72
+    - _VariationStrength: 0.48
+    - _AccentThreshold: 0.76
+    - _AccentStrength: 0.19
+    - _ColorSteps: 5
+    - _Metallic: 0.0
+    - _Smoothness: 0.06
+    m_Colors:
+    - _BaseColor: {r: 0.420000, g: 0.410000, b: 0.370000, a: 1.000000}
+    - _VariationColor: {r: 0.570000, g: 0.550000, b: 0.490000, a: 1.000000}
+    - _AccentColor: {r: 0.300000, g: 0.290000, b: 0.260000, a: 1.000000}
+  m_BuildTextureStacks: []
