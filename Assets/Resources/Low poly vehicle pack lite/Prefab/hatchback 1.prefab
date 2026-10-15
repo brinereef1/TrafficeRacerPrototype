@@ -658,6 +658,7 @@ GameObject:
   - component: {fileID: 3762442169341049031}
   - component: {fileID: 4574867339965997692}
   - component: {fileID: -5825518950937468301}
+  - component: {fileID: 6620399943678207072}
   m_Layer: 0
   m_Name: hatchback 1
   m_TagString: Untagged
@@ -731,9 +732,21 @@ MonoBehaviour:
   carHeightOffset: 0
   despawnBehindDistance: 40
   aheadSafetyMargin: 15
-  honkAudioSource: {fileID: 0}
-  honkSFX: {fileID: 8300000, guid: ff89931a694f3c54e82ca0f93b29d733, type: 3}
-  honkVolume: 0.7
+--- !u!114 &6620399943678207072
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4574867339965997693}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c4bd9790f40f2e4f906ce3d839dff8c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CollisionPushEffect
+  pushDistance: 1.2
+  pushDuration: 0.45
+  tiltAngle: 8
 --- !u!1 &7265704377711452752
 GameObject:
   m_ObjectHideFlags: 0

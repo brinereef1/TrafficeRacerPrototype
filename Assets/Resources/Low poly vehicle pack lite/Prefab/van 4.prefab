@@ -484,6 +484,7 @@ GameObject:
   - component: {fileID: 9093568833530103538}
   - component: {fileID: 8464805770805926990}
   - component: {fileID: 7917998978628244648}
+  - component: {fileID: 606966707826798208}
   m_Layer: 0
   m_Name: van 4
   m_TagString: Untagged
@@ -557,9 +558,21 @@ MonoBehaviour:
   carHeightOffset: 0
   despawnBehindDistance: 40
   aheadSafetyMargin: 15
-  honkAudioSource: {fileID: 0}
-  honkSFX: {fileID: 8300000, guid: ff89931a694f3c54e82ca0f93b29d733, type: 3}
-  honkVolume: 0.7
+--- !u!114 &606966707826798208
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8464805770805926984}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c4bd9790f40f2e4f906ce3d839dff8c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CollisionPushEffect
+  pushDistance: 1.2
+  pushDuration: 0.45
+  tiltAngle: 8
 --- !u!1 &8770867826818043563
 GameObject:
   m_ObjectHideFlags: 0

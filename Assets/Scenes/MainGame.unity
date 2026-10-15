@@ -187,9 +187,9 @@ MonoBehaviour:
   roadWidth: 15
   trackStartDistance: -15
   initialStraightPieces: 2
-  curveChance: 0.35
+  curveChance: 0.1
   minStraightsBetweenCorners: 1
-  lookaheadDistance: 200
+  lookaheadDistance: 500
   recycleDistanceBehind: 20
   maxPlacementAttempts: 10
   overlapTolerance: 0
@@ -1022,7 +1022,7 @@ MonoBehaviour:
   spawnAheadDistance: 70
   minSpawnInterval: 1
   maxSpawnInterval: 4
-  maxActiveVehicles: 6
+  maxActiveVehicles: 8
   initialPoolSizePerPrefab: 2
   expandPoolIfNeeded: 1
   minTrafficSpeed: 5
@@ -3177,9 +3177,9 @@ GameObject:
   m_Component:
   - component: {fileID: 7161595608004259252}
   - component: {fileID: 7505470809941948168}
-  - component: {fileID: 7505470809941948176}
   - component: {fileID: 7505470809941948175}
   - component: {fileID: 7505470809941948177}
+  - component: {fileID: 7505470809941948178}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -3200,111 +3200,22 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
   roadManager: {fileID: 51406026}
-  forwardSpeed: 20
+  forwardSpeed: 50
   laneChangeSpeed: 10
   carHeightOffset: 0
-  laneChangeRepeatInterval: 0
-  curveSpeedReduction: 5
+  curveSpeedReduction: 10
   curveCheckDistance: 8
   curveAngleThreshold: 3
   speedChangeRate: 2
---- !u!82 &7505470809941948176
-AudioSource:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7505470809941948174}
-  m_Enabled: 1
-  serializedVersion: 4
-  OutputAudioMixerGroup: {fileID: 0}
-  m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 8300000, guid: 03e5cf654890a344a9cfbf4ce37cbf60, type: 3}
-  m_PlayOnAwake: 0
-  m_Volume: 1
-  m_Pitch: 1
-  Loop: 1
-  Mute: 0
-  Spatialize: 0
-  SpatializePostEffects: 0
-  Priority: 256
-  DopplerLevel: 1
-  MinDistance: 1
-  MaxDistance: 500
-  Pan2D: 0
-  rolloffMode: 0
-  BypassEffects: 0
-  BypassListenerEffects: 0
-  BypassReverbZones: 0
-  rolloffCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  panLevelCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  spreadCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  reverbZoneMixCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0.5
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
+  speedMultiplierAfterCollision: 0.25
+  collisionLaneLockDuration: 0.6
+  collisionRotationRecovery: 25
+  collisionYawAngle: 3
+  collisionRollAngle: 5
+  sideImpactKickSpeed: 3
+  sideImpactSpringStrength: 30
+  sideImpactDamping: 9
+  maxSideImpactOffset: 0.6
 --- !u!114 &7505470809941948177
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3317,10 +3228,28 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f64a9e61822f08a44bb3eab31f5f50f7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCollision
-  gameOverPanel: {fileID: 570011587}
-  gameOverImage: {fileID: 465435983}
-  zoomDuration: 0.6
-  startScale: 0.1
+  playerController: {fileID: 7505470809941948175}
+  minimumTrackGap: 5.5
+  extraForwardPush: 1.5
+  maxTrackGapForSeparation: 8
+  collisionCooldown: 0.8
+  sideImpactTrackDistance: 2
+  sideImpactSpeedMultiplier: 0.25
+--- !u!114 &7505470809941948178
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7505470809941948174}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c4bd9790f40f2e4f906ce3d839dff8c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CollisionPushEffect
+  pushDistance: 1.2
+  pushDuration: 0.45
+  tiltAngle: 8
 --- !u!1 &7687653253566692230
 GameObject:
   m_ObjectHideFlags: 0

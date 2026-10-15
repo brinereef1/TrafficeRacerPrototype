@@ -1,95 +1,142 @@
-using System.Collections;
+
 using UnityEngine;
 
 public class PlayerCollision : MonoBehaviour
 {
-    [Header("Game Over UI")]
-    [SerializeField] private GameObject gameOverPanel;
-    [SerializeField] private RectTransform gameOverImage;
+    [Header("References")]
+    [SerializeField] private PlayerController playerController;
 
-    [Header("Zoom Animation")]
-    [SerializeField] private float zoomDuration = 0.6f;
-    [SerializeField] private float startScale = 0.1f;
-    
-    private bool hasCrashed;
+    [Header("Collision Separation")]
+    [Tooltip("Desired distance between cars after an impact.")]
+    [SerializeField] private float minimumTrackGap = 5.5f;
+
+    [Tooltip("Extra distance to shove a vehicle hit from behind.")]
+    [SerializeField] private float extraForwardPush = 1.5f;
+
+    [Tooltip("Maximum track-distance difference for resolving contact.")]
+    [SerializeField] private float maxTrackGapForSeparation = 8f;
+
+    [SerializeField] private float collisionCooldown = 0.6f;
+
+    private float nextCollisionTime;
+
+    [Header("Side Impact Detection")]
+    [SerializeField] private float sideImpactTrackDistance = 3.5f;
+
+    [SerializeField, Range(0.1f, 1f)]
+    private float sideImpactSpeedMultiplier = 0.25f;
 
     private void Awake()
     {
-        // Hide the game over panel at the start.
-        if (gameOverPanel != null)
-        {
-            gameOverPanel.SetActive(false);
-        }
+        if (playerController == null)
+            playerController = GetComponent<PlayerController>();
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        if (hasCrashed)
+        if (Time.time < nextCollisionTime)
             return;
 
-        // Check if the collision hit a traffic car.
         TrafficVehicle traffic =
             other.GetComponentInParent<TrafficVehicle>();
 
-        if (traffic == null)
+        if (traffic == null || playerController == null)
             return;
 
-        hasCrashed = true;
-        
-        Debug.Log("GAME OVER! Player collided with traffic.");
+        nextCollisionTime =
+            Time.time + Mathf.Max(0.1f, collisionCooldown);
 
-        // Pause the game.
-        Time.timeScale = 0f;
+        float trackGap =
+            traffic.TrackDistance - playerController.TrackDistance;
 
-        if (gameOverPanel == null || gameOverImage == null)
+        // SIDE IMPACT:
+        // The player is attempting to enter another vehicle's lane
+        // while the cars are side by side.
+        bool isSideImpact =
+            playerController.IsChangingLane &&
+            Mathf.Abs(trackGap) <= sideImpactTrackDistance;
+
+        if (isSideImpact)
         {
-            Debug.LogWarning(
-                "PlayerCollision: Assign Game Over Panel " +
-                "and Game Over Image in the Inspector.",
-                this
+            // Positive means the player is farther to the right
+            // in road-space coordinates.
+            float lateralDifference =
+                playerController.LateralOffset -
+                traffic.LateralOffset;
+
+            float playerPushDirection;
+
+            if (Mathf.Abs(lateralDifference) > 0.05f)
+            {
+                playerPushDirection = Mathf.Sign(lateralDifference);
+            }
+            else
+            {
+                // Fallback if the cars have nearly identical
+                // lateral positions.
+                Vector3 trafficLocalPosition =
+                    transform.InverseTransformPoint(
+                        traffic.transform.position
+                    );
+
+                playerPushDirection =
+                    trafficLocalPosition.x >= 0f ? -1f : 1f;
+            }
+
+            // Player returns toward their original lane and
+            // both cars recoil in opposite directions.
+            playerController.ApplySideTrafficImpact(
+                playerPushDirection,
+                sideImpactSpeedMultiplier
             );
 
+            traffic.ApplySideImpact(
+                -playerPushDirection,
+                sideImpactSpeedMultiplier
+            );
+
+            Debug.Log("Side impact: both vehicles pushed apart.");
             return;
         }
 
-        // Show the panel and start the zoom effect small.
-        gameOverPanel.SetActive(true);
-        gameOverImage.localScale =
-            Vector3.one * startScale;
+        // REAR-END / FRONT-BACK IMPACT:
+        // Keep the existing forward-push behavior.
+        Vector3 awayFromTraffic =
+            transform.position - traffic.transform.position;
 
-        // Play the game over zoom while the game is paused.
-        StartCoroutine(ZoomInGameOver());
-    }
+        awayFromTraffic.y = 0f;
 
-    private IEnumerator ZoomInGameOver()
-    {
-        float elapsed = 0f;
+        float rearImpactDirection =
+            Vector3.Dot(awayFromTraffic, transform.right) >= 0f
+                ? 1f
+                : -1f;
 
-        while (elapsed < zoomDuration)
+        playerController.ApplyTrafficImpact(rearImpactDirection);
+
+        traffic.ApplyCollisionVisual(-rearImpactDirection);
+
+        if (trackGap >= 0f &&
+            trackGap <= maxTrackGapForSeparation)
         {
-            elapsed += Time.unscaledDeltaTime;
-
-            float progress = Mathf.Clamp01(
-                elapsed / zoomDuration
+            traffic.PushForwardAfterPlayerImpact(
+                playerController.TrackDistance,
+                minimumTrackGap,
+                extraForwardPush
+            );
+        }
+        else if (trackGap < 0f &&
+                Mathf.Abs(trackGap) <= maxTrackGapForSeparation)
+        {
+            playerController.SeparateFromTraffic(
+                traffic.TrackDistance + minimumTrackGap
             );
 
-            // Ease the scale out smoothly.
-            float easedProgress =
-                1f - Mathf.Pow(1f - progress, 3f);
-
-            float scale = Mathf.Lerp(
-                startScale,
-                1f,
-                easedProgress
+            traffic.SeparateBehindPlayer(
+                playerController.TrackDistance,
+                minimumTrackGap
             );
-
-            gameOverImage.localScale =
-                Vector3.one * scale;
-
-            yield return null;
         }
 
-        // Keep the image at full size at the end.
-        gameOverImage.localScale = Vector3.one;
+        Debug.Log("Rear-end collision response applied.");
     }
 }
