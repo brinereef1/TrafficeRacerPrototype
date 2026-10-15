@@ -38,6 +38,39 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private VehicleImpactBody impactBody =
         new VehicleImpactBody();
 
+    [Header("Curve Drift")]
+    [Tooltip("Curve angle (degrees over the check distance) that gives a full drift.")]
+    [SerializeField] private float driftFullAngle = 10f;
+
+    [Tooltip("Extra yaw (degrees) the nose points into the curve at full drift.")]
+    [SerializeField] private float maxDriftYaw = 22f;
+
+    [Tooltip("Body roll (degrees) leaning to the outside of the curve.")]
+    [SerializeField] private float maxDriftRoll = 7f;
+
+    [Tooltip("How far the car slides wide toward the outside of the curve.")]
+    [SerializeField] private float maxDriftLateral = 0.45f;
+
+    [Tooltip("How fast the drift builds up (full drift per second).")]
+    [SerializeField] private float driftEnterRate = 3f;
+
+    [Tooltip("How fast the car straightens out after the curve.")]
+    [SerializeField] private float driftExitRate = 2f;
+
+    [Tooltip("Small counter-steer wiggle while sliding (degrees).")]
+    [SerializeField] private float driftWobbleAngle = 1.5f;
+    [SerializeField] private float driftWobbleSpeed = 2.6f;
+
+    [Tooltip("How much of the drift yaw the camera follows (0 = none, 1 = all).")]
+    [SerializeField, Range(0f, 1f)] private float cameraDriftFollow = 0.25f;
+
+    private float driftSlide;          // -1 (left curve) .. +1 (right curve)
+    private float driftYaw;
+    private float driftRoll;
+    private float driftLateral;
+    private float driftBlockedUntil;
+    private Quaternion roadRotation = Quaternion.identity;
+
     private float laneInputLockedUntil;
     private float forcedSpeedTarget = -1f;
     private float shoveTargetDistance = float.MinValue;
@@ -54,6 +87,13 @@ public class PlayerController : MonoBehaviour
     public int CurrentLane => currentLane;
     public float CurrentForwardSpeed => currentForwardSpeed;
     public float DistanceTravelled => trackDistance;
+
+    /// <summary>-1..+1. Sign = curve direction, magnitude = drift amount.</summary>
+    public float DriftSlide => driftSlide;
+
+    /// <summary>Road heading the camera should follow (mostly ignores drift yaw).</summary>
+    public Quaternion CameraRotation =>
+        roadRotation * Quaternion.Euler(0f, driftYaw * cameraDriftFollow, 0f);
 
     public bool IsChangingLane =>
         roadManager != null &&
@@ -103,6 +143,10 @@ public class PlayerController : MonoBehaviour
             HandleLaneInput();
         }
 
+        // Signed curve angle: + = right curve, - = left curve.
+        float curveAngle = GetCurveAngle();
+        UpdateDrift(curveAngle, dt);
+
         // Speed: either a hard impact deceleration, or normal driving.
         if (forcedSpeedTarget >= 0f)
         {
@@ -120,7 +164,8 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            float targetSpeed = IsRoadCurving()
+            float targetSpeed =
+                Mathf.Abs(curveAngle) >= curveAngleThreshold
                 ? Mathf.Max(0f, forwardSpeed - curveSpeedReduction)
                 : forwardSpeed;
 
@@ -163,7 +208,11 @@ public class PlayerController : MonoBehaviour
         UpdatePlayerPose();
     }
 
-    private bool IsRoadCurving()
+    /// <summary>
+    /// Signed change of road direction ahead (degrees).
+    /// Positive = curving right, negative = curving left, 0 = no road to check.
+    /// </summary>
+    private float GetCurveAngle()
     {
         float sampleDistance = Mathf.Min(
             trackDistance + curveCheckDistance,
@@ -171,7 +220,7 @@ public class PlayerController : MonoBehaviour
         );
 
         if (sampleDistance <= trackDistance)
-            return false;
+            return 0f;
 
         roadManager.GetPose(
             trackDistance,
@@ -197,12 +246,68 @@ public class PlayerController : MonoBehaviour
             Vector3.up
         ).normalized;
 
-        float directionChange = Vector3.Angle(
+        // Positive when the road bends to the right.
+        return Vector3.SignedAngle(
             currentForward,
-            futureForward
+            futureForward,
+            Vector3.up
         );
+    }
 
-        return directionChange >= curveAngleThreshold;
+    private void UpdateDrift(float curveAngle, float dt)
+    {
+        float absAngle = Mathf.Abs(curveAngle);
+        bool inCurve =
+            absAngle >= curveAngleThreshold &&
+            Time.time >= driftBlockedUntil;
+
+        float target = 0f;
+
+        if (inCurve)
+        {
+            // Sharper curve = bigger slide (never less than half).
+            float strength = Mathf.Lerp(
+                0.5f,
+                1f,
+                Mathf.InverseLerp(
+                    curveAngleThreshold,
+                    Mathf.Max(curveAngleThreshold + 0.1f, driftFullAngle),
+                    absAngle
+                )
+            );
+
+            // Slower car = smaller slide.
+            float speedFactor = Mathf.Lerp(
+                0.6f,
+                1f,
+                Mathf.InverseLerp(
+                    0f,
+                    Mathf.Max(0.1f, forwardSpeed),
+                    currentForwardSpeed
+                )
+            );
+
+            target = Mathf.Sign(curveAngle) * strength * speedFactor;
+        }
+
+        float rate = Mathf.Abs(target) > Mathf.Abs(driftSlide)
+            ? driftEnterRate
+            : driftExitRate;
+
+        driftSlide = Mathf.MoveTowards(driftSlide, target, rate * dt);
+
+        float amount = Mathf.Abs(driftSlide);
+
+        // Counter-steer wiggle makes the slide feel alive.
+        float wobble =
+            Mathf.Sin(Time.time * driftWobbleSpeed) *
+            driftWobbleAngle * amount;
+
+        // Right curve: nose points further right, body leans left
+        // (outside), and the car slides wide to the left.
+        driftYaw = driftSlide * maxDriftYaw + wobble;
+        driftRoll = driftSlide * maxDriftRoll;
+        driftLateral = -driftSlide * maxDriftLateral;
     }
 
     private void HandleLaneInput()
@@ -237,13 +342,19 @@ public class PlayerController : MonoBehaviour
     {
         roadManager.GetPose(
             trackDistance,
-            lateralOffset + impactBody.Lateral,
+            lateralOffset + impactBody.Lateral + driftLateral,
             out Vector3 position,
             out Quaternion rotation
         );
 
+        // The camera follows this pure road heading.
+        roadRotation = rotation;
+
         position += Vector3.up * carHeightOffset;
-        rotation *= impactBody.RotationOffset;
+
+        rotation *=
+            Quaternion.Euler(0f, driftYaw, driftRoll) *
+            impactBody.RotationOffset;
 
         transform.SetPositionAndRotation(position, rotation);
     }
@@ -282,6 +393,10 @@ public class PlayerController : MonoBehaviour
             Time.time + collisionLaneLockDuration;
 
         impactBody.ApplyImpact(info);
+
+        // A crash breaks the drift; don't restart it right away.
+        driftSlide *= 0.35f;
+        driftBlockedUntil = Time.time + 0.5f;
     }
 
     /// <summary>Smoothly shoves the car forward to this track distance.</summary>

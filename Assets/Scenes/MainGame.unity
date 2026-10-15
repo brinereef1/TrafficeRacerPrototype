@@ -856,6 +856,17 @@ MonoBehaviour:
   rotationSmoothSpeed: 8
   lookAheadDistance: 10
   lookHeight: 1.5
+  maxShakeOffset: 0.35
+  maxShakeAngle: 3
+  shakeFrequency: 25
+  traumaDecay: 1.8
+  recoilStrength: 3
+  recoilStiffness: 60
+  recoilDamping: 8
+  fovKick: 7
+  fovRecovery: 4
+  driftCameraRoll: 2.5
+  driftFovBoost: 5
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -3180,6 +3191,7 @@ GameObject:
   - component: {fileID: 7505470809941948175}
   - component: {fileID: 7505470809941948177}
   - component: {fileID: 7505470809941948178}
+  - component: {fileID: 7505470809941948179}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -3203,19 +3215,34 @@ MonoBehaviour:
   forwardSpeed: 50
   laneChangeSpeed: 10
   carHeightOffset: 0
-  curveSpeedReduction: 10
+  curveSpeedReduction: 20
   curveCheckDistance: 8
   curveAngleThreshold: 3
   speedChangeRate: 2
-  speedMultiplierAfterCollision: 0.25
+  impactDecelRate: 60
+  separationShoveSpeed: 30
   collisionLaneLockDuration: 0.6
-  collisionRotationRecovery: 25
-  collisionYawAngle: 3
-  collisionRollAngle: 5
-  sideImpactKickSpeed: 3
-  sideImpactSpringStrength: 30
-  sideImpactDamping: 9
-  maxSideImpactOffset: 0.6
+  impactLaneReturnMultiplier: 1.5
+  impactBody:
+    stiffness: 90
+    damping: 9
+    maxLateral: 1
+    maxYaw: 22
+    maxRoll: 12
+    maxPitch: 7
+    lateralKick: 7
+    yawKick: 220
+    rollKick: 150
+    pitchKick: 90
+  driftFullAngle: 10
+  maxDriftYaw: 22
+  maxDriftRoll: 7
+  maxDriftLateral: 0.45
+  driftEnterRate: 3
+  driftExitRate: 2
+  driftWobbleAngle: 1.5
+  driftWobbleSpeed: 2.6
+  cameraDriftFollow: 0.25
 --- !u!114 &7505470809941948177
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3229,12 +3256,20 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCollision
   playerController: {fileID: 7505470809941948175}
+  feedback: {fileID: 0}
   minimumTrackGap: 5.5
   extraForwardPush: 1.5
   maxTrackGapForSeparation: 8
   collisionCooldown: 0.8
+  maxClosingSpeed: 20
+  minimumSeverity: 0.25
   sideImpactTrackDistance: 2
-  sideImpactSpeedMultiplier: 0.25
+  sideSpeedKeepLight: 0.85
+  sideSpeedKeepHeavy: 0.55
+  rearSpeedTransfer: 0.75
+  rearSpeedKeepHeavy: 0.6
+  trafficMomentumTransfer: 0.7
+  playerMomentumGain: 0.5
 --- !u!114 &7505470809941948178
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3250,6 +3285,36 @@ MonoBehaviour:
   pushDistance: 1.2
   pushDuration: 0.45
   tiltAngle: 8
+--- !u!114 &7505470809941948179
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7505470809941948174}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 43f02997b059b81429daff1b19f02e2d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DriftEffects
+  player: {fileID: 7505470809941948175}
+  leftRearWheel: {fileID: 5410327667997487735}
+  rightRearWheel: {fileID: 2505878366756919557}
+  leftWheelOffset: {x: -0.85, y: 0.1, z: -1.4}
+  rightWheelOffset: {x: 0.85, y: 0.1, z: -1.4}
+  effectStartSlide: 0.3
+  minSpeed: 4
+  useSkidMarks: 1
+  skidFadeTime: 5
+  skidWidth: 0.25
+  skidOpacity: 0.55
+  skidMaterial: {fileID: 0}
+  useSmoke: 1
+  maxEmissionRate: 35
+  smokeMaterial: {fileID: 0}
+  driftLoop: {fileID: 0}
+  driftVolume: 0.7
+  audioFadeSpeed: 6
 --- !u!1 &7687653253566692230
 GameObject:
   m_ObjectHideFlags: 0

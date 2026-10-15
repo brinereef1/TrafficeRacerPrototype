@@ -31,6 +31,14 @@ public class CameraFollow : MonoBehaviour
     [SerializeField] private float fovKick = 7f;
     [SerializeField] private float fovRecovery = 4f;
 
+    [Header("Drift")]
+    [Tooltip("Camera roll (degrees) at full drift.")]
+    [SerializeField] private float driftCameraRoll = 2.5f;
+    [Tooltip("Extra field of view (degrees) at full drift.")]
+    [SerializeField] private float driftFovBoost = 5f;
+
+    private PlayerController player;
+
     private Vector3 smoothVelocity;
     private Vector3 smoothPosition;
     private Quaternion smoothRotation;
@@ -50,6 +58,9 @@ public class CameraFollow : MonoBehaviour
 
         if (cam != null)
             baseFov = cam.fieldOfView;
+
+        if (target != null)
+            player = target.GetComponentInParent<PlayerController>();
     }
 
     /// <summary>Called by CollisionFeedback when the player is hit.</summary>
@@ -82,8 +93,15 @@ public class CameraFollow : MonoBehaviour
             initialized = true;
         }
 
+        // Follow the road heading, so the car's drift angle stays
+        // visible on screen instead of being cancelled by the camera.
+        Quaternion followRotation = player != null
+            ? player.CameraRotation
+            : target.rotation;
+
         // Keep the camera behind and above the player.
-        Vector3 desiredPosition = target.TransformPoint(offset);
+        Vector3 desiredPosition =
+            target.position + followRotation * offset;
 
         smoothPosition = Vector3.SmoothDamp(
             smoothPosition,
@@ -95,7 +113,7 @@ public class CameraFollow : MonoBehaviour
         // Look toward the road ahead.
         Vector3 lookTarget =
             target.position
-            + target.forward * lookAheadDistance
+            + (followRotation * Vector3.forward) * lookAheadDistance
             + Vector3.up * lookHeight;
 
         Vector3 direction = lookTarget - smoothPosition;
@@ -124,7 +142,13 @@ public class CameraFollow : MonoBehaviour
 
         Vector3 finalPosition =
             smoothPosition + smoothRotation * recoilOffset;
-        Quaternion finalRotation = smoothRotation;
+
+        // Horizon tilts a little while drifting.
+        float driftSlide = player != null ? player.DriftSlide : 0f;
+
+        Quaternion finalRotation =
+            smoothRotation *
+            Quaternion.Euler(0f, 0f, -driftSlide * driftCameraRoll);
 
         // Perlin shake, squared trauma feels more natural.
         trauma = Mathf.MoveTowards(trauma, 0f, traumaDecay * dt);
@@ -140,7 +164,7 @@ public class CameraFollow : MonoBehaviour
             finalPosition +=
                 smoothRotation * (noise * maxShakeOffset * shake);
 
-            finalRotation = smoothRotation * Quaternion.Euler(
+            finalRotation = finalRotation * Quaternion.Euler(
                 Noise(t, 47f) * maxShakeAngle * shake,
                 Noise(t, 59f) * maxShakeAngle * shake,
                 Noise(t, 71f) * maxShakeAngle * 1.5f * shake);
@@ -151,7 +175,8 @@ public class CameraFollow : MonoBehaviour
         if (cam != null)
         {
             fovBoost = Mathf.Lerp(fovBoost, 0f, fovRecovery * dt);
-            cam.fieldOfView = baseFov + fovBoost;
+            cam.fieldOfView =
+                baseFov + fovBoost + Mathf.Abs(driftSlide) * driftFovBoost;
         }
     }
 
