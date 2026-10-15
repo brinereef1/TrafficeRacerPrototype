@@ -1,4 +1,3 @@
-
 using UnityEngine;
 
 public class PlayerController : MonoBehaviour
@@ -24,36 +23,33 @@ public class PlayerController : MonoBehaviour
     [Tooltip("How quickly the car changes speed.")]
     [SerializeField] private float speedChangeRate = 5f;
 
-    
     [Header("Collision Response")]
-    [SerializeField, Range(0.1f, 1f)]
-    private float speedMultiplierAfterCollision = 0.25f;
+    [Tooltip("How hard the car brakes when hit (units/s per second).")]
+    [SerializeField] private float impactDecelRate = 60f;
+
+    [Tooltip("Speed the soft separation shove moves the car (units/s).")]
+    [SerializeField] private float separationShoveSpeed = 30f;
 
     [SerializeField] private float collisionLaneLockDuration = 0.6f;
-    [SerializeField] private float collisionRotationRecovery = 25f;
-    [SerializeField] private float collisionYawAngle = 3f;
-    [SerializeField] private float collisionRollAngle = 5f;
+
+    [Tooltip("Lane return is faster right after an impact (bounce-off feel).")]
+    [SerializeField] private float impactLaneReturnMultiplier = 1.5f;
+
+    [SerializeField] private VehicleImpactBody impactBody =
+        new VehicleImpactBody();
 
     private float laneInputLockedUntil;
-    private float collisionYawOffset;
-    private float collisionRollOffset;
+    private float forcedSpeedTarget = -1f;
+    private float shoveTargetDistance = float.MinValue;
 
-    [Header("Side Collision")]
-    [SerializeField] private float sideImpactKickSpeed = 3f;
-    [SerializeField] private float sideImpactSpringStrength = 30f;
-    [SerializeField] private float sideImpactDamping = 9f;
-    [SerializeField] private float maxSideImpactOffset = 0.6f;
-
-    private float sideImpactOffset;
-    private float sideImpactVelocity;
-
-    public float LateralOffset => lateralOffset;
-    private int previousLane;   
+    private int previousLane;
     private float currentForwardSpeed;
     private float trackDistance;
     private float lateralOffset;
     private int currentLane;
-    
+
+    public float LateralOffset => lateralOffset;
+    public float LaneChangeSpeed => laneChangeSpeed;
     public float TrackDistance => trackDistance;
     public int CurrentLane => currentLane;
     public float CurrentForwardSpeed => currentForwardSpeed;
@@ -86,75 +82,97 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        // Set the starting distance and lane.
         trackDistance = 0f;
-
         currentForwardSpeed = 5f;
 
         currentLane = (roadManager.LaneCount - 1) / 2;
         previousLane = currentLane;
         lateralOffset = roadManager.GetLaneOffset(currentLane);
 
-        // Tell the road where the player starts.
         roadManager.PlayerDistance = trackDistance;
 
         UpdatePlayerPose();
     }
 
-
     private void Update()
     {
+        float dt = Time.deltaTime;
+
         if (Time.time >= laneInputLockedUntil)
         {
             HandleLaneInput();
         }
 
-        // Change the speed if the road is turning.
-        float targetSpeed = IsRoadCurving()
-            ? Mathf.Max(0f, forwardSpeed - curveSpeedReduction)
-            : forwardSpeed;
+        // Speed: either a hard impact deceleration, or normal driving.
+        if (forcedSpeedTarget >= 0f)
+        {
+            currentForwardSpeed = Mathf.MoveTowards(
+                currentForwardSpeed,
+                forcedSpeedTarget,
+                impactDecelRate * dt
+            );
 
-        // Ease the speed up or down.
-        currentForwardSpeed = Mathf.MoveTowards(
-            currentForwardSpeed,
-            targetSpeed,
-            speedChangeRate * Time.deltaTime
-        );
+            if (Mathf.Approximately(
+                    currentForwardSpeed, forcedSpeedTarget))
+            {
+                forcedSpeedTarget = -1f;
+            }
+        }
+        else
+        {
+            float targetSpeed = IsRoadCurving()
+                ? Mathf.Max(0f, forwardSpeed - curveSpeedReduction)
+                : forwardSpeed;
 
-        // Move forward along the road.
-        trackDistance += currentForwardSpeed * Time.deltaTime;
+            currentForwardSpeed = Mathf.MoveTowards(
+                currentForwardSpeed,
+                targetSpeed,
+                speedChangeRate * dt
+            );
+        }
+
+        trackDistance += currentForwardSpeed * dt;
+
+        // Soft separation: shove the car forward instead of teleporting.
+        if (shoveTargetDistance > trackDistance)
+        {
+            trackDistance = Mathf.MoveTowards(
+                trackDistance,
+                shoveTargetDistance,
+                separationShoveSpeed * dt
+            );
+        }
 
         // Move toward the chosen lane.
-        float targetOffset =
-            roadManager.GetLaneOffset(currentLane);
+        float targetOffset = roadManager.GetLaneOffset(currentLane);
+
+        float laneSpeed = laneChangeSpeed;
+
+        if (Time.time < laneInputLockedUntil)
+            laneSpeed *= impactLaneReturnMultiplier;
 
         lateralOffset = Mathf.MoveTowards(
             lateralOffset,
             targetOffset,
-            laneChangeSpeed * Time.deltaTime
+            laneSpeed * dt
         );
 
-        // Send the current player position to the road.
         roadManager.PlayerDistance = trackDistance;
 
-        RecoverCollisionRotation(Time.deltaTime);
+        impactBody.Tick(dt);
         UpdatePlayerPose();
     }
 
-
     private bool IsRoadCurving()
     {
-        // Do not look past the end of the generated road.
         float sampleDistance = Mathf.Min(
             trackDistance + curveCheckDistance,
             roadManager.GeneratedEndDistance - 0.1f
         );
 
-        // Stop if there is no road left to inspect.
         if (sampleDistance <= trackDistance)
             return false;
 
-        // Read the road direction at the current and future points.
         roadManager.GetPose(
             trackDistance,
             0f,
@@ -169,7 +187,6 @@ public class PlayerController : MonoBehaviour
             out Quaternion futureRotation
         );
 
-        // Ignore any upward slope and only check the road direction.
         Vector3 currentForward = Vector3.ProjectOnPlane(
             currentRotation * Vector3.forward,
             Vector3.up
@@ -191,7 +208,7 @@ public class PlayerController : MonoBehaviour
     private void HandleLaneInput()
     {
         int laneBeforeInput = currentLane;
-        
+
         if (Input.GetKeyDown(KeyCode.A) ||
             Input.GetKeyDown(KeyCode.LeftArrow))
         {
@@ -220,105 +237,26 @@ public class PlayerController : MonoBehaviour
     {
         roadManager.GetPose(
             trackDistance,
-            lateralOffset + sideImpactOffset,
+            lateralOffset + impactBody.Lateral,
             out Vector3 position,
             out Quaternion rotation
         );
 
         position += Vector3.up * carHeightOffset;
-
-        // Apply temporary yaw and body roll on top of road rotation.
-        rotation *= Quaternion.Euler(
-            0f,
-            collisionYawOffset,
-            collisionRollOffset
-        );
+        rotation *= impactBody.RotationOffset;
 
         transform.SetPositionAndRotation(position, rotation);
     }
 
-    public void ApplyTrafficImpact(float sideDirection)
+    /// <summary>
+    /// Single entry point for every traffic collision.
+    /// </summary>
+    /// <param name="info">Impact description (severity, direction...).</param>
+    /// <param name="speedAfterImpact">Forward speed the car ends up with.</param>
+    public void ApplyImpact(ImpactInfo info, float speedAfterImpact)
     {
-        // If the player was moving into another lane,
-        // return them to the previous, safer lane.
-        if (IsChangingLane)
-        {
-            int rejectedLane = currentLane;
-
-            currentLane = previousLane;
-            previousLane = rejectedLane;
-
-            // Snap to the safe lane center so the player
-            // doesn't continue crossing the other car.
-            lateralOffset = roadManager.GetLaneOffset(currentLane);
-        }
-
-        // Reduce speed by 75%.
-        currentForwardSpeed *= speedMultiplierAfterCollision;
-
-        // Briefly prevent immediate repeated lane changes.
-        laneInputLockedUntil =
-            Time.time + collisionLaneLockDuration;
-
-        // Small visual impact reaction without sideways displacement.
-        collisionYawOffset =
-            -Mathf.Sign(sideDirection) * collisionYawAngle;
-
-        collisionRollOffset =
-            -Mathf.Sign(sideDirection) * collisionRollAngle;
-    }
-
-    public void SeparateFromTraffic(float minimumTrackDistance)
-    {
-        if (trackDistance >= minimumTrackDistance)
-            return;
-
-        trackDistance = minimumTrackDistance;
-        roadManager.PlayerDistance = trackDistance;
-
-        UpdatePlayerPose();
-    }
-
-    private void RecoverCollisionRotation(float deltaTime)
-    {
-        collisionYawOffset = Mathf.MoveTowards(
-            collisionYawOffset,
-            0f,
-            collisionRotationRecovery * deltaTime
-        );
-
-        collisionRollOffset = Mathf.MoveTowards(
-            collisionRollOffset,
-            0f,
-            collisionRotationRecovery * deltaTime
-        );
-
-        // Spring force pulls the lateral offset back toward zero.
-        sideImpactVelocity +=
-            -sideImpactOffset *
-            sideImpactSpringStrength *
-            deltaTime;
-
-        // Damping prevents endless oscillation.
-        sideImpactVelocity *=
-            Mathf.Exp(-sideImpactDamping * deltaTime);
-
-        sideImpactOffset +=
-            sideImpactVelocity * deltaTime;
-
-        sideImpactOffset = Mathf.Clamp(
-            sideImpactOffset,
-            -maxSideImpactOffset,
-            maxSideImpactOffset
-        );
-    }
-
-    public void ApplySideTrafficImpact(
-        float lateralDirection,
-        float speedMultiplier)
-    {
-        // Cancel the attempted lane change, but do not snap
-        // the car instantly back to the lane center.
+        // Cancel the attempted lane change (no snapping - the car
+        // bounces back smoothly with the spring + faster lane return).
         if (IsChangingLane)
         {
             int rejectedLane = currentLane;
@@ -326,21 +264,30 @@ public class PlayerController : MonoBehaviour
             previousLane = rejectedLane;
         }
 
-        // Reduce speed to the requested percentage.
-        currentForwardSpeed *= Mathf.Clamp01(speedMultiplier);
+        speedAfterImpact = Mathf.Max(0f, speedAfterImpact);
+
+        if (speedAfterImpact < currentForwardSpeed)
+        {
+            // Brake hard over a few frames instead of an instant drop.
+            forcedSpeedTarget = speedAfterImpact;
+        }
+        else
+        {
+            // Hit from behind: instant forward jolt.
+            currentForwardSpeed = speedAfterImpact;
+            forcedSpeedTarget = -1f;
+        }
 
         laneInputLockedUntil =
             Time.time + collisionLaneLockDuration;
 
-        // Push sideways, away from the other vehicle.
-        sideImpactVelocity +=
-            Mathf.Sign(lateralDirection) * sideImpactKickSpeed;
-
-        collisionYawOffset =
-            -Mathf.Sign(lateralDirection) * collisionYawAngle;
-
-        collisionRollOffset =
-            -Mathf.Sign(lateralDirection) * collisionRollAngle;
+        impactBody.ApplyImpact(info);
     }
 
+    /// <summary>Smoothly shoves the car forward to this track distance.</summary>
+    public void ShoveForwardTo(float minimumTrackDistance)
+    {
+        shoveTargetDistance =
+            Mathf.Max(shoveTargetDistance, minimumTrackDistance);
+    }
 }

@@ -1,4 +1,3 @@
-
 using UnityEngine;
 
 public class TrafficVehicle : MonoBehaviour
@@ -23,27 +22,18 @@ public class TrafficVehicle : MonoBehaviour
     [SerializeField] private float despawnBehindDistance = 40f;
     [SerializeField] private float aheadSafetyMargin = 15f;
 
-
     [Header("Collision Response")]
-    [SerializeField] private float rearImpactPushSpeed = 8f;
-    [SerializeField] private float impactPushDecay = 18f;
-    [SerializeField] private float impactRotationRecovery = 25f;
-    [SerializeField] private float impactYawAngle = 4f;
-    [SerializeField] private float impactRollAngle = 5f;
+    [Tooltip("How fast the extra forward kick fades (units/s per second).")]
+    [SerializeField] private float impactPushDecay = 10f;
+
+    [Tooltip("Speed of the soft separation shove (units/s).")]
+    [SerializeField] private float separationShoveSpeed = 30f;
+
+    [SerializeField] private VehicleImpactBody impactBody =
+        new VehicleImpactBody();
 
     private float collisionForwardSpeed;
-    private float collisionYawOffset;
-    private float collisionRollOffset;
-
-    [Header("Side Collision")]
-    [SerializeField] private float sideImpactKickSpeed = 2.5f;
-    [SerializeField] private float sideImpactSpringStrength = 30f;
-    [SerializeField] private float sideImpactDamping = 9f;
-    [SerializeField] private float maxSideImpactOffset = 0.6f;
-
-    private float sideImpactOffset;
-    private float sideImpactVelocity;
-    public float LateralOffset => lateralOffset;
+    private float shoveTargetDistance = float.MinValue;
 
     private RoadManager roadManager;
     private TrafficSpawner owner;
@@ -59,15 +49,15 @@ public class TrafficVehicle : MonoBehaviour
     private float nextLaneChangeTime;
     private bool isChangingLane;
     private bool initialized;
+    private bool isReturningToPool;
 
     // Public values for other scripts.
+    public float LateralOffset => lateralOffset;
     public float TrackDistance => trackDistance;
     public float ForwardSpeed => currentSpeed;
     public int CurrentLane => currentLane;
     public int PreviousLane => previousLane;
     public bool IsChangingLane => isChangingLane;
-
-    private bool isReturningToPool;
 
     public void ResetForPool()
     {
@@ -82,10 +72,8 @@ public class TrafficVehicle : MonoBehaviour
         nextLaneChangeTime = 0f;
         isReturningToPool = false;
         collisionForwardSpeed = 0f;
-        collisionYawOffset = 0f;
-        collisionRollOffset = 0f;
-        sideImpactOffset = 0f;
-        sideImpactVelocity = 0f;
+        shoveTargetDistance = float.MinValue;
+        impactBody.Reset();
     }
 
     public bool OccupiesLane(int lane)
@@ -115,16 +103,14 @@ public class TrafficVehicle : MonoBehaviour
         cruiseSpeed = speed;
         currentSpeed = speed;
 
-        lateralOffset =
-            roadManager.GetLaneOffset(currentLane);
+        lateralOffset = roadManager.GetLaneOffset(currentLane);
 
         isChangingLane = false;
         initialized = true;
         collisionForwardSpeed = 0f;
-        collisionYawOffset = 0f;
-        collisionRollOffset = 0f;
-        sideImpactOffset = 0f;
-        sideImpactVelocity = 0f;
+        shoveTargetDistance = float.MinValue;
+        impactBody.Reset();
+
         ScheduleNextLaneChange();
         UpdatePose();
     }
@@ -151,9 +137,25 @@ public class TrafficVehicle : MonoBehaviour
         );
 
         trackDistance +=
-        (currentSpeed + collisionForwardSpeed) * deltaTime;
+            (currentSpeed + collisionForwardSpeed) * deltaTime;
 
-        RecoverCollisionResponse(deltaTime);
+        // Soft separation: shoved ahead of the player, not teleported.
+        if (shoveTargetDistance > trackDistance)
+        {
+            trackDistance = Mathf.MoveTowards(
+                trackDistance,
+                shoveTargetDistance,
+                separationShoveSpeed * deltaTime
+            );
+        }
+
+        collisionForwardSpeed = Mathf.MoveTowards(
+            collisionForwardSpeed,
+            0f,
+            impactPushDecay * deltaTime
+        );
+
+        impactBody.Tick(deltaTime);
 
         if (ShouldDespawn())
         {
@@ -205,9 +207,7 @@ public class TrafficVehicle : MonoBehaviour
             return;
         }
 
-        // Try the left or right lane first.
-        int firstDirection =
-            Random.value < 0.5f ? -1 : 1;
+        int firstDirection = Random.value < 0.5f ? -1 : 1;
 
         for (int attempt = 0; attempt < 2; attempt++)
         {
@@ -223,17 +223,10 @@ public class TrafficVehicle : MonoBehaviour
                 continue;
             }
 
-            // The spawner checks nearby cars and the target lane.
-            if (!owner.IsLaneSafeForChange(
-                    this, candidateLane))
-            {
+            if (!owner.IsLaneSafeForChange(this, candidateLane))
                 continue;
-            }
 
-            // Save the current lane before changing.
             previousLane = currentLane;
-
-            // Move into the target lane right away.
             currentLane = candidateLane;
             isChangingLane = true;
 
@@ -241,8 +234,7 @@ public class TrafficVehicle : MonoBehaviour
         }
 
         // No safe lane was available, so wait a bit and try again later.
-        nextLaneChangeTime =
-            Time.time + Random.Range(0.5f, 1f);
+        nextLaneChangeTime = Time.time + Random.Range(0.5f, 1f);
     }
 
     private void UpdateLaneMovement(float deltaTime)
@@ -250,8 +242,7 @@ public class TrafficVehicle : MonoBehaviour
         if (!isChangingLane)
             return;
 
-        float targetOffset =
-            roadManager.GetLaneOffset(currentLane);
+        float targetOffset = roadManager.GetLaneOffset(currentLane);
 
         lateralOffset = Mathf.MoveTowards(
             lateralOffset,
@@ -273,8 +264,7 @@ public class TrafficVehicle : MonoBehaviour
         float min = Mathf.Max(0.1f, minLaneChangeInterval);
         float max = Mathf.Max(min, maxLaneChangeInterval);
 
-        nextLaneChangeTime =
-            Time.time + Random.Range(min, max);
+        nextLaneChangeTime = Time.time + Random.Range(min, max);
     }
 
     private bool ShouldDespawn()
@@ -291,119 +281,40 @@ public class TrafficVehicle : MonoBehaviour
     {
         roadManager.GetPose(
             trackDistance,
-            lateralOffset + sideImpactOffset,
+            lateralOffset + impactBody.Lateral,
             out Vector3 position,
             out Quaternion rotation
         );
 
         position += Vector3.up * carHeightOffset;
-
-        rotation *= Quaternion.Euler(
-            0f,
-            collisionYawOffset,
-            collisionRollOffset
-        );
+        rotation *= impactBody.RotationOffset;
 
         transform.SetPositionAndRotation(position, rotation);
     }
-    
-    public void ApplyCollisionVisual(float sideDirection)
-    {
-        float direction = Mathf.Abs(sideDirection) < 0.01f
-            ? 1f
-            : Mathf.Sign(sideDirection);
 
-        collisionYawOffset = -direction * impactYawAngle;
-        collisionRollOffset = direction * impactRollAngle;
-    }
-
-    public void PushForwardAfterPlayerImpact(
-        float playerDistance,
-        float minimumGap,
-        float extraForwardPush)
-    {
-        float safeDistance =
-            playerDistance + minimumGap + extraForwardPush;
-
-        // Immediately create enough road-distance separation.
-        if (trackDistance < safeDistance)
-            trackDistance = safeDistance;
-
-        // Add a brief forward impulse after the initial separation.
-        collisionForwardSpeed = Mathf.Max(
-            collisionForwardSpeed,
-            rearImpactPushSpeed
-        );
-
-        ApplyCollisionVisual(1f);
-
-        UpdatePose();
-    }
-
-    public void SeparateBehindPlayer(
-        float playerDistance,
-        float minimumGap)
-    {
-        float safeDistance = playerDistance - minimumGap;
-
-        if (trackDistance > safeDistance)
-            trackDistance = safeDistance;
-
-        collisionForwardSpeed = 0f;
-        UpdatePose();
-    }
-
-    private void RecoverCollisionResponse(float deltaTime)
-    {
-        collisionForwardSpeed = Mathf.MoveTowards(
-            collisionForwardSpeed,
-            0f,
-            impactPushDecay * deltaTime
-        );
-
-        collisionYawOffset = Mathf.MoveTowards(
-            collisionYawOffset,
-            0f,
-            impactRotationRecovery * deltaTime
-        );
-
-        collisionRollOffset = Mathf.MoveTowards(
-            collisionRollOffset,
-            0f,
-            impactRotationRecovery * deltaTime
-        );
-
-        sideImpactVelocity +=
-        -sideImpactOffset *
-        sideImpactSpringStrength *
-        deltaTime;
-
-        sideImpactVelocity *=
-            Mathf.Exp(-sideImpactDamping * deltaTime);
-
-        sideImpactOffset +=
-            sideImpactVelocity * deltaTime;
-
-        sideImpactOffset = Mathf.Clamp(
-            sideImpactOffset,
-            -maxSideImpactOffset,
-            maxSideImpactOffset
-        );
-    }
-
-    public void ApplySideImpact(
-        float lateralDirection,
+    /// <summary>
+    /// Single entry point for every player collision.
+    /// </summary>
+    /// <param name="forwardKick">Extra forward speed (momentum from the player).</param>
+    /// <param name="speedMultiplier">Multiplier applied to current speed (1 = none).</param>
+    public void ApplyImpact(
+        ImpactInfo info,
+        float forwardKick,
         float speedMultiplier)
     {
-        // Slow the car while allowing normal acceleration
-        // to bring it back to cruising speed afterward.
+        collisionForwardSpeed =
+            Mathf.Max(collisionForwardSpeed, forwardKick);
+
         currentSpeed *= Mathf.Clamp01(speedMultiplier);
 
-        // Push away from the player in road-space coordinates.
-        sideImpactVelocity +=
-            Mathf.Sign(lateralDirection) * sideImpactKickSpeed;
+        impactBody.ApplyImpact(info);
+    }
 
-        ApplyCollisionVisual(lateralDirection);
+    /// <summary>Smoothly shoves the car forward to this track distance.</summary>
+    public void ShoveForwardTo(float minimumTrackDistance)
+    {
+        shoveTargetDistance =
+            Mathf.Max(shoveTargetDistance, minimumTrackDistance);
     }
 
     private void OnDestroy()
