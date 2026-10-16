@@ -37,7 +37,27 @@ public class CameraFollow : MonoBehaviour
     [Tooltip("Extra field of view (degrees) at full drift.")]
     [SerializeField] private float driftFovBoost = 5f;
 
+    [Header("Nitro")]
+    [Tooltip("Extra field of view at full nitro (degrees).")]
+    [SerializeField] private float nitroFovBoost = 14f;
+
+    [Tooltip("Camera drops back by this much at full nitro (stretch feel).")]
+    [SerializeField] private float nitroPullBack = 1.8f;
+
+    [Tooltip("Camera lowers slightly at full nitro.")]
+    [SerializeField] private float nitroLower = 0.3f;
+
+    [Tooltip("Constant light vibration at full nitro (0..1).")]
+    [SerializeField, Range(0f, 1f)] private float nitroShake = 0.15f;
+
+    [Tooltip("How fast the camera blends in and out of the nitro look.")]
+    [SerializeField] private float nitroBlendSpeed = 3f;
+
+    [SerializeField] private bool useSpeedLines = true;
+
     private PlayerController player;
+    private NitroSpeedLines speedLines;
+    private float nitroAmount;
 
     private Vector3 smoothVelocity;
     private Vector3 smoothPosition;
@@ -61,6 +81,14 @@ public class CameraFollow : MonoBehaviour
 
         if (target != null)
             player = target.GetComponentInParent<PlayerController>();
+
+        if (useSpeedLines)
+        {
+            speedLines = GetComponent<NitroSpeedLines>();
+
+            if (speedLines == null)
+                speedLines = gameObject.AddComponent<NitroSpeedLines>();
+        }
     }
 
     /// <summary>Called by CollisionFeedback when the player is hit.</summary>
@@ -99,9 +127,24 @@ public class CameraFollow : MonoBehaviour
             ? player.CameraRotation
             : target.rotation;
 
+        // Blend into the nitro look (uses real time so it stays smooth
+        // even during the crash slow-motion).
+        float nitroTarget = player != null ? player.NitroAmount : 0f;
+
+        nitroAmount = Mathf.MoveTowards(
+            nitroAmount,
+            nitroTarget,
+            nitroBlendSpeed * Time.unscaledDeltaTime);
+
+        // The camera drops back and slightly lower for a stretched feel.
+        Vector3 dynamicOffset = offset + new Vector3(
+            0f,
+            -nitroLower * nitroAmount,
+            -nitroPullBack * nitroAmount);
+
         // Keep the camera behind and above the player.
         Vector3 desiredPosition =
-            target.position + followRotation * offset;
+            target.position + followRotation * dynamicOffset;
 
         smoothPosition = Vector3.SmoothDamp(
             smoothPosition,
@@ -152,7 +195,9 @@ public class CameraFollow : MonoBehaviour
 
         // Perlin shake, squared trauma feels more natural.
         trauma = Mathf.MoveTowards(trauma, 0f, traumaDecay * dt);
-        float shake = trauma * trauma;
+        float shake = Mathf.Max(
+            trauma * trauma,
+            nitroAmount * nitroShake);
 
         if (shake > 0.0001f)
         {
@@ -176,7 +221,13 @@ public class CameraFollow : MonoBehaviour
         {
             fovBoost = Mathf.Lerp(fovBoost, 0f, fovRecovery * dt);
             cam.fieldOfView =
-                baseFov + fovBoost + Mathf.Abs(driftSlide) * driftFovBoost;
+                baseFov +
+                fovBoost +
+                Mathf.Abs(driftSlide) * driftFovBoost +
+                nitroAmount * nitroFovBoost;
+
+            if (speedLines != null)
+                speedLines.SetAmount(nitroAmount);
         }
     }
 

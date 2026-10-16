@@ -1,9 +1,20 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] private RoadManager roadManager;
+
+    [Header("Racer")]
+    [Tooltip("ON = keyboard (human player). OFF = driven by a RacerAI component.")]
+    [SerializeField] private bool isPlayerControlled = true;
+
+    [Tooltip("Starting lane (0 = leftmost). -1 = center lane.")]
+    [SerializeField] private int startLane = -1;
+
+    [Tooltip("Starting distance along the road.")]
+    [SerializeField] private float startDistance = 0f;
 
     [Header("Movement")]
     [SerializeField] private float forwardSpeed = 20f;
@@ -22,6 +33,9 @@ public class PlayerController : MonoBehaviour
 
     [Tooltip("How quickly the car changes speed.")]
     [SerializeField] private float speedChangeRate = 5f;
+
+    [Tooltip("Braking strength when an AI speed limit applies (e.g. following traffic).")]
+    [SerializeField] private float limitedBrakeRate = 12f;
 
     [Header("Collision Response")]
     [Tooltip("How hard the car brakes when hit (units/s per second).")]
@@ -71,6 +85,17 @@ public class PlayerController : MonoBehaviour
     private float driftBlockedUntil;
     private Quaternion roadRotation = Quaternion.identity;
 
+    private float speedScale = 1f;
+    private float externalSpeedLimit = float.MaxValue;
+    private float lastImpactTime = -100f;
+
+    /// <summary>Every active racer (human + AI).</summary>
+    public static readonly List<PlayerController> AllRacers =
+        new List<PlayerController>();
+
+    /// <summary>The keyboard-controlled racer (camera / HUD target).</summary>
+    public static PlayerController HumanPlayer { get; private set; }
+
     private float laneInputLockedUntil;
     private float forcedSpeedTarget = -1f;
     private float shoveTargetDistance = float.MinValue;
@@ -83,6 +108,54 @@ public class PlayerController : MonoBehaviour
 
     public float LateralOffset => lateralOffset;
     public float LaneChangeSpeed => laneChangeSpeed;
+
+    public bool IsPlayerControlled => isPlayerControlled;
+    public RoadManager Road => roadManager;
+    public bool IsLaneInputLocked => Time.time < laneInputLockedUntil;
+
+    // Nitro (set by NitroBoost).
+    /// <summary>0..1 smoothed nitro intensity (camera effects read this).</summary>
+    public float NitroAmount { get; set; }
+
+    /// <summary>Extra top speed added while boosting.</summary>
+    public float BoostSpeed { get; set; }
+
+    /// <summary>Acceleration multiplier while boosting.</summary>
+    public float BoostAcceleration { get; set; } = 1f;
+
+    public float TimeSinceImpact => Time.time - lastImpactTime;
+    public float CruiseSpeed => forwardSpeed * speedScale;
+
+    /// <summary>Multiplier on top speed (AI skill / rubber banding).</summary>
+    public float SpeedScale
+    {
+        get => speedScale;
+        set => speedScale = Mathf.Max(0.1f, value);
+    }
+
+    /// <summary>Caps the target speed (AI following slower traffic).</summary>
+    public void SetSpeedLimit(float limit) => externalSpeedLimit = limit;
+    public void ClearSpeedLimit() => externalSpeedLimit = float.MaxValue;
+
+    /// <summary>
+    /// Same as pressing the left (-1) or right (+1) key.
+    /// Used by RacerAI. Returns false if blocked (crash lock, edge of road).
+    /// </summary>
+    public bool RequestLaneChange(int direction)
+    {
+        if (roadManager == null || Time.time < laneInputLockedUntil)
+            return false;
+
+        int target = Mathf.Clamp(
+            currentLane + direction, 0, roadManager.LaneCount - 1);
+
+        if (target == currentLane)
+            return false;
+
+        previousLane = currentLane;
+        currentLane = target;
+        return true;
+    }
     public float TrackDistance => trackDistance;
     public int CurrentLane => currentLane;
     public float CurrentForwardSpeed => currentForwardSpeed;
@@ -109,6 +182,23 @@ public class PlayerController : MonoBehaviour
         return IsChangingLane && previousLane == lane;
     }
 
+    private void OnEnable()
+    {
+        if (!AllRacers.Contains(this))
+            AllRacers.Add(this);
+
+        if (isPlayerControlled)
+            HumanPlayer = this;
+    }
+
+    private void OnDisable()
+    {
+        AllRacers.Remove(this);
+
+        if (HumanPlayer == this)
+            HumanPlayer = null;
+    }
+
     private void Start()
     {
         if (roadManager == null)
@@ -122,14 +212,19 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        trackDistance = 0f;
+        trackDistance = startDistance;
         currentForwardSpeed = 5f;
 
-        currentLane = (roadManager.LaneCount - 1) / 2;
+        currentLane = startLane >= 0
+            ? Mathf.Clamp(startLane, 0, roadManager.LaneCount - 1)
+            : (roadManager.LaneCount - 1) / 2;
+
         previousLane = currentLane;
         lateralOffset = roadManager.GetLaneOffset(currentLane);
 
-        roadManager.PlayerDistance = trackDistance;
+        // Only the human drives the road generation.
+        if (isPlayerControlled)
+            roadManager.PlayerDistance = trackDistance;
 
         UpdatePlayerPose();
     }
@@ -138,7 +233,7 @@ public class PlayerController : MonoBehaviour
     {
         float dt = Time.deltaTime;
 
-        if (Time.time >= laneInputLockedUntil)
+        if (isPlayerControlled && Time.time >= laneInputLockedUntil)
         {
             HandleLaneInput();
         }
@@ -164,15 +259,32 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
+            float cruise = forwardSpeed * speedScale;
+
             float targetSpeed =
                 Mathf.Abs(curveAngle) >= curveAngleThreshold
-                ? Mathf.Max(0f, forwardSpeed - curveSpeedReduction)
-                : forwardSpeed;
+                ? Mathf.Max(0f, cruise - curveSpeedReduction)
+                : cruise;
+
+            // Nitro adds extra top speed.
+            targetSpeed += BoostSpeed;
+
+            // AI may cap the speed (following slower traffic).
+            bool limited = externalSpeedLimit < targetSpeed;
+
+            if (limited)
+                targetSpeed = Mathf.Max(0f, externalSpeedLimit);
+
+            float rate =
+                (limited && targetSpeed < currentForwardSpeed)
+                    ? limitedBrakeRate
+                    : speedChangeRate *
+                      (BoostSpeed > 0.01f ? BoostAcceleration : 1f);
 
             currentForwardSpeed = Mathf.MoveTowards(
                 currentForwardSpeed,
                 targetSpeed,
-                speedChangeRate * dt
+                rate * dt
             );
         }
 
@@ -202,7 +314,8 @@ public class PlayerController : MonoBehaviour
             laneSpeed * dt
         );
 
-        roadManager.PlayerDistance = trackDistance;
+        if (isPlayerControlled)
+            roadManager.PlayerDistance = trackDistance;
 
         impactBody.Tick(dt);
         UpdatePlayerPose();
@@ -368,7 +481,10 @@ public class PlayerController : MonoBehaviour
     {
         // Cancel the attempted lane change (no snapping - the car
         // bounces back smoothly with the spring + faster lane return).
-        if (IsChangingLane)
+        // Only reject the lane change once per impact. If the lock is
+        // already active the rejection already happened, and swapping
+        // again would send the car back into the other vehicle.
+        if (IsChangingLane && Time.time >= laneInputLockedUntil)
         {
             int rejectedLane = currentLane;
             currentLane = previousLane;
@@ -394,9 +510,35 @@ public class PlayerController : MonoBehaviour
 
         impactBody.ApplyImpact(info);
 
+        lastImpactTime = Time.time;
+
         // A crash breaks the drift; don't restart it right away.
         driftSlide *= 0.35f;
         driftBlockedUntil = Time.time + 0.5f;
+    }
+
+    /// <summary>
+    /// Keeps lane changes blocked while touching another vehicle.
+    /// If a lane change is still running (the impact was missed or
+    /// ignored by a cooldown), it is cancelled once.
+    /// </summary>
+    public void ExtendLaneLock(float seconds)
+    {
+        if (roadManager == null)
+            return;
+
+        if (Time.time >= laneInputLockedUntil &&
+            IsChangingLane &&
+            currentLane != previousLane)
+        {
+            int rejectedLane = currentLane;
+            currentLane = previousLane;
+            previousLane = rejectedLane;
+        }
+
+        laneInputLockedUntil = Mathf.Max(
+            laneInputLockedUntil,
+            Time.time + Mathf.Max(0f, seconds));
     }
 
     /// <summary>Smoothly shoves the car forward to this track distance.</summary>

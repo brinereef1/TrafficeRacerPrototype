@@ -71,11 +71,15 @@ public class CollisionFeedback : MonoBehaviour
         }
     }
 
-    public void Play(ImpactInfo info)
+    /// <param name="playerView">
+    /// True when the human is involved: camera shake and hit-stop apply.
+    /// False for AI-only crashes: sparks, smoke and a quieter sound only.
+    /// </param>
+    public void Play(ImpactInfo info, bool playerView = true)
     {
         float severity = Mathf.Clamp01(info.severity);
 
-        if (cameraFollow != null)
+        if (playerView && cameraFollow != null)
             cameraFollow.AddImpact(severity, info.pushDirection, info.isSide);
 
         EmitSparks(info.worldPoint, info.worldVelocity, severity);
@@ -84,9 +88,10 @@ public class CollisionFeedback : MonoBehaviour
         if (info.isSide)
             StartCoroutine(ScrapeRoutine(info));
 
-        PlaySound(severity);
+        PlaySound(playerView ? severity : severity * 0.5f);
 
-        if (useHitStop &&
+        if (playerView &&
+            useHitStop &&
             severity >= minSeverityForHitStop &&
             hitStopRoutine == null &&
             Time.timeScale > 0.5f)

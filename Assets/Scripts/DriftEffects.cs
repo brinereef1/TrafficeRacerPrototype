@@ -22,6 +22,10 @@ public class DriftEffects : MonoBehaviour
     [SerializeField] private Vector3 rightWheelOffset =
         new Vector3(0.85f, -0.47f, -1.4f);
 
+    [Tooltip("Extra offset for the smoke only (skid marks stay on the ground).")]
+    [SerializeField] private Vector3 smokeOffset =
+        new Vector3(0f, 0.1f, 0f);
+
     [Header("Activation")]
     [Tooltip("Drift amount (0..1) needed before effects start.")]
     [SerializeField, Range(0f, 1f)] private float effectStartSlide = 0.3f;
@@ -36,9 +40,32 @@ public class DriftEffects : MonoBehaviour
     [Tooltip("Optional. Falls back to Sprites/Default.")]
     [SerializeField] private Material skidMaterial;
 
-    [Header("Tire Smoke")]
+    [Header("Smoke - Normal Driving")]
+    [Tooltip("Light road haze behind the rear wheels while driving.")]
+    [SerializeField] private bool useNormalSmoke = true;
+    [SerializeField] private float normalMinSpeed = 3f;
+    [Tooltip("Speed at which the normal haze reaches its maximum.")]
+    [SerializeField] private float normalFullSpeed = 20f;
+    [SerializeField] private float normalMaxRate = 6f;
+    [Range(0f, 1f)]
+    [SerializeField] private float normalOpacity = 0.12f;
+    [SerializeField] private float normalSize = 0.7f;
+    [SerializeField] private float normalLifetime = 0.7f;
+
+    [Tooltip("Extra haze while the car is accelerating (0 = none).")]
+    [SerializeField] private float accelerationSmokeBoost = 1f;
+    [SerializeField] private float accelerationFullRate = 5f;
+
+    [Header("Smoke - Drifting")]
     [SerializeField] private bool useSmoke = true;
     [SerializeField] private float maxEmissionRate = 35f;
+    [Range(0f, 1f)]
+    [SerializeField] private float driftOpacity = 0.4f;
+    [SerializeField] private float driftSize = 1.3f;
+    [SerializeField] private float driftLifetime = 1.3f;
+
+    private float lastSpeed;
+    private float smoothedAcceleration;
     [Tooltip("Optional soft round material looks much better.")]
     [SerializeField] private Material smokeMaterial;
 
@@ -93,19 +120,67 @@ public class DriftEffects : MonoBehaviour
             ? Mathf.InverseLerp(effectStartSlide, 1f, slide)
             : 0f;
 
+        // Track acceleration so the haze thickens when the car speeds up.
+        float speed = player.CurrentForwardSpeed;
+        float dt = Time.deltaTime;
+
+        if (dt > 0.0001f)
+        {
+            float acceleration = (speed - lastSpeed) / dt;
+
+            smoothedAcceleration = Mathf.Lerp(
+                smoothedAcceleration,
+                acceleration,
+                Mathf.Clamp01(10f * dt));
+        }
+
+        lastSpeed = speed;
+
+        float accelBoost =
+            Mathf.Clamp01(
+                smoothedAcceleration /
+                Mathf.Max(0.1f, accelerationFullRate)) *
+            accelerationSmokeBoost;
+
+        // Normal driving: faint haze that grows with speed.
+        float speed01 = Mathf.InverseLerp(
+            normalMinSpeed,
+            Mathf.Max(normalMinSpeed + 0.1f, normalFullSpeed),
+            speed);
+
+        float normalRate = useNormalSmoke
+            ? normalMaxRate * speed01 * (1f + accelBoost)
+            : 0f;
+
+        // Drifting: thick tire smoke.
+        float driftRate = useSmoke ? intensity * maxEmissionRate : 0f;
+
+        float totalRate = normalRate + driftRate;
+
+        // 0 = light road haze, 1 = heavy drift smoke.
+        float blend = intensity;
+
+        float size = Mathf.Lerp(normalSize, driftSize, blend);
+        float lifetime = Mathf.Lerp(normalLifetime, driftLifetime, blend);
+        float opacity = Mathf.Lerp(normalOpacity, driftOpacity, blend);
+
         foreach (Wheel wheel in wheels)
         {
             if (wheel.trail != null)
                 wheel.trail.emitting = active && useSkidMarks;
 
-            if (wheel.smoke != null)
-            {
-                ParticleSystem.EmissionModule emission =
-                    wheel.smoke.emission;
+            if (wheel.smoke == null)
+                continue;
 
-                emission.rateOverTime =
-                    useSmoke ? intensity * maxEmissionRate : 0f;
-            }
+            ParticleSystem.EmissionModule emission = wheel.smoke.emission;
+            emission.rateOverTime = totalRate;
+
+            ParticleSystem.MainModule main = wheel.smoke.main;
+            main.startSize =
+                new ParticleSystem.MinMaxCurve(size * 0.6f, size);
+            main.startLifetime =
+                new ParticleSystem.MinMaxCurve(lifetime * 0.7f, lifetime);
+            main.startColor = new Color(1f, 1f, 1f, opacity);
         }
 
         UpdateAudio(intensity);
@@ -157,7 +232,14 @@ public class DriftEffects : MonoBehaviour
 
         Wheel wheel = new Wheel();
         wheel.trail = CreateTrail(go);
-        wheel.smoke = CreateSmoke(go);
+
+        // Smoke gets its own object so its offset is independent
+        // from the skid mark, which must stay on the ground.
+        GameObject smokeGo = new GameObject(objectName + "Smoke");
+        smokeGo.transform.SetParent(transform, false);
+        smokeGo.transform.localPosition = local + smokeOffset;
+
+        wheel.smoke = CreateSmoke(smokeGo);
 
         return wheel;
     }
@@ -230,7 +312,8 @@ public class DriftEffects : MonoBehaviour
             },
             new[]
             {
-                new GradientAlphaKey(0.35f, 0f),
+                new GradientAlphaKey(0f, 0f),
+                new GradientAlphaKey(1f, 0.15f),
                 new GradientAlphaKey(0f, 1f)
             });
 

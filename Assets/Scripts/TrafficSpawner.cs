@@ -1,4 +1,3 @@
-
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -45,6 +44,9 @@ public class TrafficSpawner : MonoBehaviour
         prefabLookup = new Dictionary<TrafficVehicle, GameObject>();
 
     private float spawnTimer;
+
+    /// <summary>Read-only list of live traffic (used by RacerAI).</summary>
+    public IReadOnlyList<TrafficVehicle> ActiveVehicles => activeVehicles;
 
     private void Start()
     {
@@ -315,7 +317,7 @@ public class TrafficSpawner : MonoBehaviour
         TrafficVehicle requester,
         int targetLane)
     {
-        if (IsPlayerBesideVehicle(requester, targetLane))
+        if (IsAnyRacerBesideVehicle(requester, targetLane))
         {
             return false;
         }
@@ -362,7 +364,53 @@ public class TrafficSpawner : MonoBehaviour
                 return false;
         }
 
+        // Do not spawn on top of a racer (human or AI).
+        foreach (PlayerController racer in PlayerController.AllRacers)
+        {
+            if (racer == null || !racer.OccupiesLane(lane))
+                continue;
+
+            if (!HasSafeGap(
+                    racer.TrackDistance,
+                    spawnDistance,
+                    spawnSpeed,
+                    racer.CurrentForwardSpeed))
+                return false;
+        }
+
         return true;
+    }
+
+    private bool IsAnyRacerBesideVehicle(
+        TrafficVehicle vehicle,
+        int targetLane)
+    {
+        if (vehicle == null)
+            return false;
+
+        float safetyDistance = Mathf.Max(
+            minimumGapAhead,
+            minimumGapBehind
+        );
+
+        foreach (PlayerController racer in PlayerController.AllRacers)
+        {
+            if (racer == null)
+                continue;
+
+            float distanceGap = Mathf.Abs(
+                racer.TrackDistance - vehicle.TrackDistance);
+
+            // Only block a lane change when the cars are close.
+            if (distanceGap > safetyDistance)
+                continue;
+
+            if (racer.OccupiesLane(vehicle.CurrentLane) ||
+                racer.OccupiesLane(targetLane))
+                return true;
+        }
+
+        return false;
     }
 
     private bool HasSafeGap(

@@ -14,6 +14,10 @@ public class PlayerCollision : MonoBehaviour
     [SerializeField] private float maxTrackGapForSeparation = 8f;
     [SerializeField] private float collisionCooldown = 0.6f;
 
+    [Tooltip("Lane changes stay blocked this long after the last frame " +
+             "of overlap with another vehicle.")]
+    [SerializeField] private float overlapLaneLock = 0.25f;
+
     [Header("Severity")]
     [Tooltip("Closing speed (m/s) that counts as a 100% severe hit.")]
     [SerializeField] private float maxClosingSpeed = 20f;
@@ -57,10 +61,23 @@ public class PlayerCollision : MonoBehaviour
         if (Time.time < nextCollisionTime)
             return;
 
+        if (playerController == null)
+            return;
+
+        // Another racer (human or AI)?
+        PlayerController otherRacer =
+            other.GetComponentInParent<PlayerController>();
+
+        if (otherRacer != null && otherRacer != playerController)
+        {
+            HandleRacerContact(otherRacer);
+            return;
+        }
+
         TrafficVehicle traffic =
             other.GetComponentInParent<TrafficVehicle>();
 
-        if (traffic == null || playerController == null)
+        if (traffic == null)
             return;
 
         nextCollisionTime =
@@ -92,6 +109,25 @@ public class PlayerCollision : MonoBehaviour
         HandleRearImpact(
             traffic, trackGap, playerSpeed, trafficSpeed,
             pushDirection, contactPoint, worldVelocity);
+    }
+
+    private void OnTriggerStay(Collider other)
+    {
+        if (playerController == null)
+            return;
+
+        PlayerController otherRacer =
+            other.GetComponentInParent<PlayerController>();
+
+        bool touchingRacer =
+            otherRacer != null && otherRacer != playerController;
+
+        bool touchingTraffic =
+            other.GetComponentInParent<TrafficVehicle>() != null;
+
+        // No lane changes while the vehicles are still touching.
+        if (touchingRacer || touchingTraffic)
+            playerController.ExtendLaneLock(overlapLaneLock);
     }
 
     private void HandleSideImpact(
@@ -140,7 +176,7 @@ public class PlayerCollision : MonoBehaviour
             0f,
             Mathf.Lerp(0.95f, 0.75f, severity));
 
-        feedback.Play(playerInfo);
+        feedback.Play(playerInfo, playerController.IsPlayerControlled);
     }
 
     private void HandleRearImpact(
@@ -221,7 +257,147 @@ public class PlayerCollision : MonoBehaviour
             }
         }
 
-        feedback.Play(playerInfo);
+        feedback.Play(playerInfo, playerController.IsPlayerControlled);
+    }
+
+    /// <summary>
+    /// Two racers touch. Whichever car's trigger fires first resolves the
+    /// contact for BOTH cars, then blocks the other car's handler.
+    /// </summary>
+    private void HandleRacerContact(PlayerController other)
+    {
+        PlayerController a = playerController;
+        PlayerController b = other;
+
+        // Start the cooldown first, then copy it to the other car, so the
+        // same contact is never resolved twice (a double resolve swapped
+        // the lane back and drove the cars into each other).
+        nextCollisionTime =
+            Time.time + Mathf.Max(0.1f, collisionCooldown);
+
+        // Make sure the other car does not resolve the same contact again.
+        PlayerCollision otherCollision = b.GetComponent<PlayerCollision>();
+
+        if (otherCollision != null)
+            otherCollision.nextCollisionTime = nextCollisionTime;
+
+        float trackGap = b.TrackDistance - a.TrackDistance;
+        float speedA = a.CurrentForwardSpeed;
+        float speedB = b.CurrentForwardSpeed;
+
+        Vector3 contactPoint =
+            (a.transform.position + b.transform.position) * 0.5f;
+
+        // Push direction for car A (-1 left, +1 right).
+        float lateralDiff = a.LateralOffset - b.LateralOffset;
+        float pushA;
+
+        if (Mathf.Abs(lateralDiff) > 0.15f)
+            pushA = Mathf.Sign(lateralDiff);
+        else
+            pushA = Random.value < 0.5f ? -1f : 1f;
+
+        bool isSide =
+            (a.IsChangingLane || b.IsChangingLane) &&
+            Mathf.Abs(trackGap) <= sideImpactTrackDistance;
+
+        ImpactInfo infoA;
+        ImpactInfo infoB;
+
+        if (isSide)
+        {
+            float changerSpeed = a.IsChangingLane
+                ? a.LaneChangeSpeed
+                : b.LaneChangeSpeed;
+
+            float forwardRelative = Mathf.Abs(speedA - speedB);
+            float closing = Mathf.Sqrt(
+                changerSpeed * changerSpeed +
+                forwardRelative * forwardRelative);
+
+            float severity = ComputeSeverity(closing);
+            float longitudinal = trackGap >= 0f ? 0.4f : -0.4f;
+
+            infoA = new ImpactInfo
+            {
+                severity = severity,
+                closingSpeed = closing,
+                pushDirection = pushA,
+                longitudinal = longitudinal,
+                isSide = true,
+                worldPoint = contactPoint,
+                worldVelocity = a.transform.forward * speedA
+            };
+
+            infoB = infoA;
+            infoB.pushDirection = -pushA;
+            infoB.longitudinal = -longitudinal;
+            infoB.worldVelocity = b.transform.forward * speedB;
+
+            float keep = Mathf.Lerp(
+                sideSpeedKeepLight, sideSpeedKeepHeavy, severity);
+
+            a.ApplyImpact(infoA, speedA * keep);
+            b.ApplyImpact(infoB, speedB * keep);
+        }
+        else
+        {
+            // The car further back hits the car in front.
+            bool aIsTrailing = trackGap >= 0f;
+
+            PlayerController trailing = aIsTrailing ? a : b;
+            PlayerController leading = aIsTrailing ? b : a;
+
+            float trailingSpeed = trailing.CurrentForwardSpeed;
+            float leadingSpeed = leading.CurrentForwardSpeed;
+
+            float closing = Mathf.Max(0f, trailingSpeed - leadingSpeed);
+            float severity = ComputeSeverity(closing);
+
+            ImpactInfo trailingInfo = new ImpactInfo
+            {
+                severity = severity,
+                closingSpeed = closing,
+                pushDirection = aIsTrailing ? pushA : -pushA,
+                longitudinal = 1f,
+                isSide = false,
+                worldPoint = contactPoint,
+                worldVelocity = trailing.transform.forward * trailingSpeed
+            };
+
+            ImpactInfo leadingInfo = trailingInfo;
+            leadingInfo.pushDirection = -trailingInfo.pushDirection;
+            leadingInfo.longitudinal = -1f;
+            leadingInfo.worldVelocity =
+                leading.transform.forward * leadingSpeed;
+
+            float newTrailingSpeed =
+                Mathf.Lerp(trailingSpeed, leadingSpeed, rearSpeedTransfer) *
+                Mathf.Lerp(0.9f, rearSpeedKeepHeavy, severity);
+
+            trailing.ApplyImpact(
+                trailingInfo, Mathf.Min(trailingSpeed, newTrailingSpeed));
+
+            leading.ApplyImpact(
+                leadingInfo,
+                leadingSpeed + closing * trafficMomentumTransfer);
+
+            if (Mathf.Abs(trackGap) <= maxTrackGapForSeparation)
+            {
+                leading.ShoveForwardTo(
+                    trailing.TrackDistance + minimumTrackGap);
+            }
+
+            infoA = aIsTrailing ? trailingInfo : leadingInfo;
+            infoB = aIsTrailing ? leadingInfo : trailingInfo;
+        }
+
+        // One feedback burst per contact. Camera effects only if the
+        // human is involved, and always from the human's point of view.
+        bool humanInvolved = a.IsPlayerControlled || b.IsPlayerControlled;
+        ImpactInfo shown = b.IsPlayerControlled ? infoB : infoA;
+
+        feedback.Play(shown, humanInvolved);
     }
 
     private float ComputeSeverity(float closingSpeed)
